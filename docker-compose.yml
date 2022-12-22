@@ -1,0 +1,161 @@
+version: '3'
+
+networks:
+  app-network:
+
+
+services:
+
+  #Eureka service
+  eureka-server:
+    image: eureka-server
+    restart: always
+    build:
+      context: ./eureka-ms/
+      dockerfile: ./src/main/resources/Dockerfile
+    container_name: eureka-server
+    networks:
+      - app-network
+    ports:
+      - "8761:8761"
+    depends_on:
+      config-server:
+        condition: service_healthy
+    healthcheck:
+      test: "curl -f http://config-server:8888/actuator/health || exit 1"
+      interval: 20s
+      timeout: 10s
+      retries: 5
+
+  #Rabbit MQ - Mensajería
+  rabbit-mq:
+    image: rabbitmq:3-management
+    restart: always
+    container_name: rabbitmq
+    networks:
+      - app-network
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  #Zipkin - Trazabilidad
+  zipkin:
+    image: openzipkin/zipkin:2
+    restart: always
+    container_name: zipkin2
+    networks:
+      - app-network
+    ports:
+      - "9411:9411"
+
+  # Servicio de configuración global
+  config-server:
+    image: config-server
+    build:
+      context: ./config-server/
+      dockerfile: ./src/main/resources/Dockerfile
+    container_name: config-server
+    networks:
+      - app-network
+    ports:
+      - "8888:8888"
+    # depends_on:
+    healthcheck:
+      test: "curl -f http://config-server:8888/actuator/health || exit 1"
+      interval: 20s
+      timeout: 10s
+      retries: 5
+
+  # Servicio de Catalog
+  catalog-service:
+    image: catalogservice
+    restart: always
+    build:
+      context: ./catalog-service/
+      dockerfile: ./src/main/resources/Dockerfile
+    container_name: catalogservice
+    networks:
+      - app-network
+    ports:
+      - "8099:8099"
+    depends_on:
+      serie-service:
+        condition: service_started
+      movie-service:
+        condition: service_started
+
+  # Base de datos MongoDB
+  db-mongo:
+    image: mongo:latest
+    restart: always
+    ports:
+      - "27018:27017"
+    networks:
+      - app-network
+    environment:
+      MONGO_INITDB_DATABASE: backend
+
+  #Servicio Series
+  serie-service:
+    image: serieservice
+    restart: always
+    build:
+      context: ./series-service/
+      dockerfile: ./src/main/resources/Dockerfile
+    container_name: serieservice
+    networks:
+      - app-network
+    ports:
+      - "8083:8083"
+    depends_on:
+      db-mongo:
+        condition: service_started
+      gateway:
+        condition: service_started
+
+  # Servicio Movies
+  movie-service:
+    image: movieservice
+    restart: always
+    build:
+      context: ./movie-service/
+      dockerfile: ./src/main/resources/Dockerfile
+    container_name: movieservice
+    networks:
+      - app-network
+    ports:
+      - "8097:8097"
+    depends_on:
+      db-mysql:
+        condition: service_started
+      gateway:
+        condition: service_started
+
+  # Servicio Gateway
+  gateway:
+    image: gateway
+    build:
+      context: ./gateway-service/
+      dockerfile: ./src/main/resources/Dockerfile
+    ports:
+      - "8080:8080"
+    restart: always
+    networks:
+      - app-network
+    depends_on:
+      config-server:
+        condition: service_started
+      eureka-server:
+        condition: service_started
+
+  # # Base de datos MySQL
+  db-mysql:
+    image: mysql:latest
+    ports:
+      - "3307:3306"
+    restart: always
+    networks:
+      - app-network
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: movies
